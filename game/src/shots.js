@@ -1,79 +1,152 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Neon Palms — screenshot staging behind ?shot=<scene>&seed=1. Each scene
+// builds the same seeded city, places Leo, the traffic, the police and the
+// HUD into a moment that shows several systems at once, then freezes the
+// simulation so the frame is deterministic: the cover drive down Palmera
+// Avenue, a four-star chase, a mission beat at the Marina Hotel, and the
+// golden-hour getaway at the beach hideout.
+window.NP = window.NP || {};
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
+NP.shots = (function () {
+  function placePeds(points) {
+    const all = NP.peds.all;
+    for (let i = 0; i < points.length && i < all.length; i++) {
+      all[i].x = points[i][0];
+      all[i].y = points[i][1];
+      all[i].angle = points[i][2] || 0;
+      all[i].state = 'walk';
+      all[i].wp = null;
     }
   }
-  return Infinity;
-}
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+  function trafficCar(type, x, y, angle, color) {
+    const car = NP.vehicles.spawnSpecial(type, x, y, angle, color);
+    car.marked = false;
+    car.driver = 'traffic';
+    car.hasDriver = true;
+    return car;
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
-}
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+  function setupBase() {
+    const g = NP.game;
+    g.buildWorld(20261);
+    NP.police.clear();
+    g.state = 'playing';
+    g.frozen = true;
+    g.time = 12;
+    g.dusk = false;
+    g.dialogue = null;
+    g.big = null;
+    g.toasts = [];
+    g.pickups = [];
+    const p = g.player;
+    p.cash = 860;
+    p.hp = 100;
+    p.hasPistol = false;
+    p.car = null;
+    return p;
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+
+  function putPlayerIn(car, p) {
+    car.driver = 'player';
+    p.car = car;
+    p.x = car.x;
+    p.y = car.y;
+    p.angle = car.angle;
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
-}
+
+  function stageCover() {
+    const p = setupBase();
+    const car = NP.vehicles.spawnSpecial('convertible', 2690, 760, Math.PI / 2, '#e2574c');
+    car.marked = false;
+    car.vy = 190;
+    car.speed = 190;
+    putPlayerIn(car, p);
+    trafficCar('sedan', 2689, 505, Math.PI / 2, '#5bc0de');
+    trafficCar('coupe', 2689, 1085, Math.PI / 2, '#f5f0e6');
+    trafficCar('taxi', 2631, 980, -Math.PI / 2, '#ffd94d');
+    trafficCar('truck', 2150, 889, 0, '#7fc97f');
+    placePeds([[2548, 600, 1.5], [2772, 900, -1.5], [2548, 1050, 1.5], [2772, 560, -1.5]]);
+    const g = NP.game;
+    g.objective = { x: NP.world.PLACES.cafe.x, y: NP.world.PLACES.cafe.y + 120, text: 'Talk to Marisol Vega — Welcome to Costa Serena', kind: 'talk' };
+    g.camera.x = 2755;
+    g.camera.y = 815;
+  }
+
+  function stageChase() {
+    const p = setupBase();
+    p.hasPistol = true;
+    p.cash = 1310;
+    const car = NP.vehicles.spawnSpecial('coupe', 2060, 920, Math.PI / 2, '#5bc0de');
+    car.marked = false;
+    car.vy = 265;
+    car.speed = 265;
+    putPlayerIn(car, p);
+    NP.police.forceStars(4);
+    const cop1 = NP.vehicles.spawnPoliceCar(2031, 762);
+    cop1.angle = Math.PI / 2; cop1.vy = 250;
+    const cop2 = NP.vehicles.spawnPoliceCar(2090, 718);
+    cop2.angle = Math.PI / 2; cop2.vy = 255;
+    const cop3 = NP.vehicles.spawnPoliceCar(2152, 1005);
+    cop3.angle = Math.PI / 2 - 0.3; cop3.vy = 230;
+    trafficCar('sedan', 2031, 1200, Math.PI / 2, '#f2a541');
+    placePeds([[1968, 830, 3.1], [2168, 1090, -1.5], [1960, 1180, 1.5]]);
+    const g = NP.game;
+    g.objective = { x: NP.world.PLACES.hideout.x, y: NP.world.PLACES.hideout.y, text: 'Shake the heat — reach the beach hideout', kind: 'mission' };
+    g.camera.x = car.x;
+    g.camera.y = 950;
+  }
+
+  function stageMission() {
+    const p = setupBase();
+    p.cash = 370;
+    const target = NP.vehicles.spawnSpecial('convertible', 2400, 668, 0, '#ff6f61');
+    p.x = 2348;
+    p.y = 672;
+    p.angle = 0.1;
+    trafficCar('sedan', 2300, 889, 0, '#8d9db6');
+    trafficCar('taxi', 2560, 831, Math.PI, '#ffd94d');
+    placePeds([[2290, 700, 0.6], [2520, 760, -2.2], [2660, 940, 1.5], [2210, 620, 2.8]]);
+    const g = NP.game;
+    g.dialogue = {
+      lines: [['Rosa Delgado', 'That coral convertible in the Marina Hotel lot, Leo. Tonight it sleeps in my garage — and the glovebox extra is yours.']],
+      i: 0, onDone: null,
+    };
+    g.objective = { x: target.x, y: target.y, text: 'Steal the convertible', kind: 'mission' };
+    g.camera.x = p.x + 60;
+    g.camera.y = p.y + 10;
+  }
+
+  function stageStory() {
+    const p = setupBase();
+    p.cash = 2560;
+    p.hasPistol = true;
+    const g = NP.game;
+    g.dusk = true;
+    const car = NP.vehicles.spawnSpecial('coupe', 3030, 2065, -0.9, '#f7b731');
+    car.marked = false;
+    car.speed = 40;
+    putPlayerIn(car, p);
+    NP.police.forceStars(2);
+    const cop1 = NP.vehicles.spawnPoliceCar(2915, 1960);
+    cop1.angle = 0.9;
+    const cop2 = NP.vehicles.spawnPoliceCar(2870, 2180);
+    cop2.angle = -0.75;
+    placePeds([[3010, 1980, 2.4], [3160, 2180, -0.8]]);
+    g.big = { title: 'MISSION COMPLETE', sub: 'Golden Hour   +$1,200', t: 1.1 };
+    g.objective = null;
+    g.camera.x = 3060;
+    g.camera.y = 2040;
+  }
+
+  function stage(name, gameObj) {
+    // During boot NP.game is not assigned yet (main.js is still running),
+    // so the game object arrives as an argument from the boot code.
+    if (gameObj && !NP.game) NP.game = gameObj;
+    if (name === 'chase') stageChase();
+    else if (name === 'mission') stageMission();
+    else if (name === 'story') stageStory();
+    else stageCover();
+  }
+
+  return { stage };
+})();
